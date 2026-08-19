@@ -41,8 +41,9 @@ bool should_use_stateful_pipeline(bool is_npu_requested,
                                   bool has_draft_model,
                                   const std::string& attention_backend,
                                   const std::shared_ptr<ov::Model>& main_model,
-                                  const ov::AnyMap& properties) {
-    if (is_npu_requested) {
+                                  const ov::AnyMap& properties,
+                                  const std::filesystem::path& models_path = {}) {
+    if (is_npu_requested || (!models_path.empty() && ov::genai::utils::is_gguf_model(models_path))) {
         return true;
     }
     if (has_draft_model && attention_backend == ov::genai::SDPA_BACKEND) {
@@ -254,7 +255,7 @@ ov::genai::LLMPipeline::LLMPipeline(
     std::shared_ptr<ov::Model> model = utils::read_model(models_path, properties);
 
     const auto generation_config = utils::from_config_json_if_exists(models_path);
-    if (should_use_stateful_pipeline(is_npu_requested, has_draft_model, attention_backend, model, properties)) {
+    if (should_use_stateful_pipeline(is_npu_requested, has_draft_model, attention_backend, model, properties, models_path)) {
         m_pimpl = StatefulPipeline::create(model, tokenizer, device, properties, generation_config, models_path);
     } else if (utils::explicitly_requires_paged_attention(user_properties)) {
         // If CB is invoked explicitly, create CB adapter as is and re-throw in case if internal issues
@@ -299,7 +300,7 @@ ov::genai::LLMPipeline::LLMPipeline(
     const Tokenizer tokenizer(models_path, properties);
 
     const auto generation_config = utils::from_config_json_if_exists(models_path);
-    if (should_use_stateful_pipeline(is_npu_requested, has_draft_model, attention_backend, model, properties)) {
+    if (should_use_stateful_pipeline(is_npu_requested, has_draft_model, attention_backend, model, properties, models_path)) {
         m_pimpl = StatefulPipeline::create(model, tokenizer, device, properties, generation_config, models_path);
     } else if (utils::explicitly_requires_paged_attention(user_properties)) {
         // If CB is invoked explicitly, create CB adapter as is and re-throw in case if internal issues

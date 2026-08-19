@@ -41,6 +41,10 @@ if(ENABLE_MISAKI_CPP)
     endif()
 endif()
 
+if(RUN_WITH_LLAMA)
+    set(ENABLE_SYSTEM_OPENCL ON CACHE BOOL "Enable system OpenCL" FORCE)
+endif()
+
 # OpenCL support for CDPruner DPP acceleration - reuse OpenVINO's ENABLE_SYSTEM_OPENCL
 if(ENABLE_SYSTEM_OPENCL)
     # Try to find OpenCL since ENABLE_SYSTEM_OPENCL is ON
@@ -133,18 +137,7 @@ FetchContent_Declare(safetensors.h
     URL_HASH SHA256=9aaf5961609601cf9aaa96582a207bce7c6e5fbf57ed2cc669bb7bde6a937d4b)
 FetchContent_MakeAvailable(safetensors.h)
 
-if(ENABLE_GGUF)
-    FetchContent_Declare(
-      gguflib
-      URL https://github.com/Lourdle/gguf-tools/archive/bac796ada809ac293e685db59b075971181cb008.zip
-      URL_HASH SHA256=4d6eab5055468d222833f3f83fe2f7909ccd06114278c2c0b468570ef002c22d)
-    FetchContent_MakeAvailable(gguflib)
-    set_target_properties(gguf-tools PROPERTIES EXCLUDE_FROM_ALL ON)
 
-    add_library(gguflib STATIC ${gguflib_SOURCE_DIR}/fp16.c ${gguflib_SOURCE_DIR}/gguflib.c)
-    set_target_properties(gguflib PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(gguflib PUBLIC "${gguflib_SOURCE_DIR}")
-endif()
 
 # Disable XGrammar for Android platform, causes issues in CI
 if(ANDROID)
@@ -205,13 +198,7 @@ configure_file("${OpenVINOGenAI_SOURCE_DIR}/cmake/templates/version.cpp.in"
                "${CMAKE_CURRENT_BINARY_DIR}/version.cpp" @ONLY)
 
 # Object library
-if(NOT ENABLE_GGUF)
-    set(GGUF_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/gguf_utils/gguf.cpp
-                     ${CMAKE_CURRENT_SOURCE_DIR}/src/gguf_utils/gguf_quants.cpp
-                     ${CMAKE_CURRENT_SOURCE_DIR}/src/gguf_utils/gguf_modeling.cpp
-                     ${CMAKE_CURRENT_SOURCE_DIR}/src/gguf_utils/building_blocks.cpp)
-    list(REMOVE_ITEM SOURCE_FILES ${GGUF_SOURCES})
-endif()
+
 
 set(TARGET_NAME openvino_genai)
 set(TARGET_NAME_OBJ ${TARGET_NAME}_obj)
@@ -228,13 +215,33 @@ if(ENABLE_XGRAMMAR)
 endif()
 
 if(ENABLE_GGUF)
-    target_link_libraries(${TARGET_NAME_OBJ} PRIVATE gguflib)
-    target_compile_definitions(${TARGET_NAME_OBJ} PRIVATE ENABLE_GGUF)
+    target_compile_definitions(${TARGET_NAME_OBJ} PRIVATE ENABLE_OV_GGUF_FRONTEND)
+
+    if(TARGET openvino::frontend::gguf)
+        target_link_libraries(${TARGET_NAME_OBJ} PRIVATE openvino::frontend::gguf)
+    endif()
 endif()
 
 target_include_directories(${TARGET_NAME_OBJ} SYSTEM PRIVATE "${safetensors.h_SOURCE_DIR}")
 
 target_link_libraries(${TARGET_NAME_OBJ} PRIVATE openvino::runtime openvino::threading nlohmann_json::nlohmann_json minja)
+
+if(RUN_WITH_LLAMA)
+    target_compile_definitions(${TARGET_NAME_OBJ} PRIVATE RUN_WITH_LLAMA)
+
+    if(TARGET llama)
+        target_include_directories(${TARGET_NAME_OBJ} PRIVATE
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/include"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/ggml/include"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/src"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/ggml/src/ggml-openvino"
+        )
+        target_link_libraries(${TARGET_NAME_OBJ} PRIVATE llama)
+        if(TARGET OpenCL::OpenCL)
+            target_link_libraries(${TARGET_NAME_OBJ} PRIVATE OpenCL::OpenCL)
+        endif()
+    endif()
+endif()
 
 if(OPENVINO_GENAI_HAS_MISAKI_CPP)
     target_link_libraries(${TARGET_NAME_OBJ} PRIVATE openvino_genai_misaki_cpp)
@@ -291,7 +298,15 @@ if(ENABLE_XGRAMMAR)
 endif()
 
 if(ENABLE_GGUF)
-  target_link_libraries(${TARGET_NAME} PRIVATE gguflib)
+  if(TARGET openvino::frontend::gguf)
+    target_link_libraries(${TARGET_NAME} PRIVATE openvino::frontend::gguf)
+  endif()
+endif()
+
+if(RUN_WITH_LLAMA)
+  if(TARGET llama)
+    target_link_libraries(${TARGET_NAME} PRIVATE llama)
+  endif()
 endif()
 
 target_compile_features(${TARGET_NAME} INTERFACE cxx_std_17)

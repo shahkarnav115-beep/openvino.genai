@@ -19,7 +19,9 @@
 #include "openvino/op/tanh.hpp"
 #include "openvino/op/transpose.hpp"
 #include "openvino/genai/text_streamer.hpp"
-#include "gguf_utils/gguf_modeling.hpp"
+
+#include "gguf_utils/gguf_reader_v1.hpp"
+#include "llama_adapter/gguf_reader_v2.hpp"
 
 
 #include "sampling/sampler.hpp"
@@ -351,12 +353,9 @@ ov::Core& singleton_core() {
 }
 
 
-namespace {
 bool is_gguf_model(const std::filesystem::path& file_path) {
     return file_path.extension() == ".gguf";
 }
-
-} // namespace
 
 const std::string PER_MODEL_PROPERTIES = "MODEL_PROPERTIES";
 
@@ -438,8 +437,10 @@ void save_openvino_model(const std::shared_ptr<ov::Model>& model, const std::str
 std::shared_ptr<ov::Model> read_model(const std::filesystem::path& model_dir,  const ov::AnyMap& properties) {
     auto [filtered_properties, enable_save_ov_model] = extract_gguf_properties(properties);
     if (is_gguf_model(model_dir)) {
-#ifdef ENABLE_GGUF
-        return create_from_gguf(model_dir.string(), enable_save_ov_model);
+#if defined(RUN_WITH_LLAMA)
+        return GgufReaderV2(model_dir, enable_save_ov_model);
+#elif defined(ENABLE_OV_GGUF_FRONTEND)
+        return GgufReaderV1(model_dir, enable_save_ov_model);
 #else
         OPENVINO_ASSERT("GGUF support is switched off. Please, recompile with 'cmake -DENABLE_GGUF=ON'");
 #endif

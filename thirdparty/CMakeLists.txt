@@ -15,3 +15,20 @@ if(BUILD_TOKENIZERS)
         RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/openvino_genai/>"
     )
 endif()
+
+
+# llama.cpp
+
+option(RUN_WITH_LLAMA "Enable llama.cpp integration" OFF)
+
+if(RUN_WITH_LLAMA)
+    set(GGML_OPENVINO ON CACHE BOOL "ggml: use OPENVINO" FORCE)
+
+    set(LLAMA_BUILD_TESTS OFF CACHE BOOL "llama: build tests" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama: build examples" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama: build server" FORCE)
+    set(LLAMA_BUILD_APP OFF CACHE BOOL "llama: build app" FORCE)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "llama: build tools" FORCE)
+
+    add_subdirectory(./llama.cpp/ "${CMAKE_BINARY_DIR}/llama.cpp/")
+endif()

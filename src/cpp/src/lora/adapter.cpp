@@ -43,7 +43,7 @@
 #include "lora/common.hpp"
 #include "lora/names_mapping.hpp"
 
-#ifdef ENABLE_GGUF
+#ifdef ENABLE_OV_GGUF_FRONTEND
 #include <algorithm>
 #include <cctype>
 #include <vector>
@@ -1074,7 +1074,7 @@ private:
 };
 
 
-#ifdef ENABLE_GGUF
+#ifdef ENABLE_OV_GGUF_FRONTEND
 // Helper to convert GGUF tensor names to OpenVINO/HF names
 std::string convert_gguf_name_to_hf(const std::string& name) {
     // 1. Handle blocks: blk.N. -> model.layers.N.
@@ -1138,26 +1138,7 @@ class GGUFAdapterImpl : public AdapterImpl {
 public:
 
     GGUFAdapterImpl(const std::filesystem::path& path) {
-        // Use get_gguf_data to load raw tensors without enforcing a full model structure
-        // This is crucial for adapters which only contain sparse weights
-        auto gguf_data = get_gguf_data(path.string());
-        auto& raw_tensors = std::get<1>(gguf_data);
-
-        ConstantMap constant_map;
-        for (auto& [name, tensor] : raw_tensors) {
-            // Convert GGUF naming convention to Hugging Face / OpenVINO convention
-            std::string converted_name = convert_gguf_name_to_hf(name);
-
-            auto constant = std::make_shared<v0::Constant>(tensor.get_element_type(), tensor.get_shape(), tensor.data());
-            constant->get_rt_info()["__gguf_buffer_holder"] = tensor;
-            constant_map[converted_name] = constant;
-        }
-
-        constant_tensors = group_lora_constant_tensors(constant_map, default_lora_constant_patterns());
-        for (const auto& constant_tensor : constant_tensors) {
-            constant_map.erase(constant_tensor.first);
-        }
-        tensors = group_lora_tensors(constant_map, default_lora_patterns());
+        OPENVINO_THROW("GGUF LoRA adapter loading is currently deprecated.");
     }
 
     const LoRATensors& get_tensors() const override {
@@ -1259,7 +1240,7 @@ Adapter::Adapter(const std::shared_ptr<AdapterImpl>& pimpl) : m_pimpl(pimpl) {}
 
 Adapter::Adapter(const std::filesystem::path& path) {
     if (path.extension() == ".gguf") {
-#ifdef ENABLE_GGUF
+#ifdef ENABLE_OV_GGUF_FRONTEND
         m_pimpl = std::make_shared<GGUFAdapterImpl>(path);
 #else
         OPENVINO_THROW("GGUF support is disabled. Please build with ENABLE_GGUF=ON to use GGUF adapters.");

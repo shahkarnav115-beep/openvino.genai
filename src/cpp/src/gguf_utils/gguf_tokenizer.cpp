@@ -3,8 +3,11 @@
 
 #include <limits>
 #include <cstdint>
+#include <optional>
 
 #include "gguf_tokenizer.hpp"
+#include "openvino/frontend/gguf/frontend.hpp"
+#include "openvino/frontend/gguf/tokenizer_metadata.hpp"
 
 #include "openvino/op/add.hpp"
 #include "openvino/op/constant.hpp"
@@ -49,6 +52,8 @@ std::map<std::string, GGUFMetaData> tokenizer_config_from_meta(
             // Extract the last part after "."
             std::string sub_key = (last_dot != std::string_view::npos) ? std::string(key.substr(last_dot + 1)) : key;
             tokenizer_config[sub_key] = value;
+        } else {
+            tokenizer_config[key] = value;
         }
     }
 
@@ -406,10 +411,13 @@ ov::OutputVector parse_bbpe_config(const std::map<std::string, GGUFMetaData>& to
     std::vector<std::vector<uint8_t>> special_tokens;
     std::vector<int32_t> special_token_indices;
 
-    for (size_t i = 0; i < vocab.size(); ++i) {
-        if (is_special_token(token_types.data<int32_t>()[i])) {
-            special_tokens.push_back(vocab[i]);
-            special_token_indices.push_back(static_cast<int32_t>(i));
+    if (token_types.get_size() > 0 && token_types.data() != nullptr) {
+        const auto* token_types_ptr = token_types.data<int32_t>();
+        for (size_t i = 0; i < std::min(vocab.size(), token_types.get_size()); ++i) {
+            if (is_special_token(token_types_ptr[i])) {
+                special_tokens.push_back(vocab[i]);
+                special_token_indices.push_back(static_cast<int32_t>(i));
+            }
         }
     }
 
@@ -424,8 +432,12 @@ ov::OutputVector parse_bbpe_config(const std::map<std::string, GGUFMetaData>& to
     if (auto it = tokenizer_config.find("unknown_token_id");
         it != tokenizer_config.end() && std::holds_alternative<ov::Tensor>(it->second)) {
         const auto& tensor = std::get<ov::Tensor>(it->second);
-        uint32_t unknown_token_id = tensor.data<uint32_t>()[0];
-        unk_token = vocab_from_config[unknown_token_id];
+        if (tensor.get_size() > 0 && tensor.data() != nullptr) {
+            uint32_t unknown_token_id = tensor.data<uint32_t>()[0];
+            if (unknown_token_id < vocab_from_config.size()) {
+                unk_token = vocab_from_config[unknown_token_id];
+            }
+        }
     }
 
     int32_t cache_capacity =
@@ -443,10 +455,53 @@ ov::OutputVector parse_bbpe_config(const std::map<std::string, GGUFMetaData>& to
     return create_func("BPETokenizer", inputs, attributes);
 }
 
+static std::unordered_map<std::string, GGUFMetaData> get_gguf_metadata_from_frontend(const std::filesystem::path& gguf_model_path) {
+    std::unordered_map<std::string, GGUFMetaData> gguf_metadata;
+    ov::frontend::gguf::FrontEnd frontend;
+    auto input_model = frontend.load(gguf_model_path.string());
+    auto model = frontend.convert(input_model);
+
+    auto extract_any = [](const ov::Any& value) -> std::optional<GGUFMetaData> {
+        if (value.is<std::string>()) {
+            return value.as<std::string>();
+        } else if (value.is<std::vector<std::string>>()) {
+            return value.as<std::vector<std::string>>();
+        } else if (value.is<int32_t>()) {
+            return value.as<int32_t>();
+        } else if (value.is<float>()) {
+            return value.as<float>();
+        } else if (value.is<ov::Tensor>()) {
+            return value.as<ov::Tensor>();
+        } else if (value.is<std::vector<int32_t>>()) {
+            return value.as<std::vector<int32_t>>();
+        }
+        return std::nullopt;
+    };
+
+    const auto& rt_info = model->get_rt_info();
+    const std::string metadata_key = ov::frontend::gguf::gguf_tokenizer_metadata_key();
+    if (rt_info.count(metadata_key)) {
+        if (auto meta_attr = rt_info.at(metadata_key).as<std::shared_ptr<ov::frontend::gguf::GGUFTokenizerMetadata>>()) {
+            for (const auto& [key, value] : meta_attr->config) {
+                if (auto extracted = extract_any(value)) {
+                    gguf_metadata[key] = *extracted;
+                }
+            }
+        }
+    }
+
+    for (const auto& [key, value] : rt_info) {
+        if (auto extracted = extract_any(value)) {
+            gguf_metadata[key] = *extracted;
+        }
+    }
+    return gguf_metadata;
+}
+
 std::tuple<std::shared_ptr<ov::Model>, std::shared_ptr<ov::Model>, std::map<std::string, GGUFMetaData>>
 create_tokenizer_from_config(const std::shared_ptr<void>& shared_object_ov_tokenizers,
                              const std::filesystem::path& gguf_model_path) {
-    auto gguf_metadata = std::get<0>(get_gguf_data(gguf_model_path.string()));
+    auto gguf_metadata = get_gguf_metadata_from_frontend(gguf_model_path);
     auto tokenizer_config = tokenizer_config_from_meta(gguf_metadata);
 
     auto tokenizer_input = std::make_shared<v0::Parameter>(element::string, PartialShape{Dimension::dynamic()});
@@ -469,11 +524,12 @@ create_tokenizer_from_config(const std::shared_ptr<void>& shared_object_ov_token
         token_types = *val;
     }
 
-    const auto token_types_data = token_types.data<int32_t>();
-
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        if (is_special_token(token_types_data[i])) {
-            special_tokens.push_back(tokens[i]);
+    if (token_types.get_size() > 0 && token_types.data() != nullptr) {
+        const auto token_types_data = token_types.data<int32_t>();
+        for (size_t i = 0; i < std::min(tokens.size(), token_types.get_size()); ++i) {
+            if (is_special_token(token_types_data[i])) {
+                special_tokens.push_back(tokens[i]);
+            }
         }
     }
 
@@ -554,9 +610,12 @@ create_tokenizer_from_config(const std::shared_ptr<void>& shared_object_ov_token
     detokenizer_outputs.insert(detokenizer_outputs.end(), const_vocab.begin(), const_vocab.end());
 
     std::vector<int32_t> special_token_ids;
-    for (size_t i = 0; i < token_types.get_size(); ++i) {
-        if (is_special_token(token_types.data<int32_t>()[i]))
-            special_token_ids.push_back(static_cast<int32_t>(i));
+    if (token_types.get_size() > 0 && token_types.data() != nullptr) {
+        const auto* token_types_ptr = token_types.data<int32_t>();
+        for (size_t i = 0; i < token_types.get_size(); ++i) {
+            if (is_special_token(token_types_ptr[i]))
+                special_token_ids.push_back(static_cast<int32_t>(i));
+        }
     }
 
     // vocab decoder

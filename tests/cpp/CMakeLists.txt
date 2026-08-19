@@ -42,6 +42,19 @@ endif()
 target_include_directories(${TEST_TARGET_NAME} PRIVATE "${OpenVINOGenAI_SOURCE_DIR}/src/cpp/src"
                                                        $<TARGET_PROPERTY:openvino::genai,INTERFACE_INCLUDE_DIRECTORIES>)
 
+if(RUN_WITH_LLAMA)
+    target_compile_definitions(${TEST_TARGET_NAME} PRIVATE RUN_WITH_LLAMA)
+    if(TARGET llama)
+        target_include_directories(${TEST_TARGET_NAME} PRIVATE
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/include"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/ggml/include"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/src"
+            "${OpenVINOGenAI_SOURCE_DIR}/thirdparty/llama.cpp/ggml/src/ggml-openvino"
+        )
+        target_link_libraries(${TEST_TARGET_NAME} PRIVATE llama)
+    endif()
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   target_link_options(${TEST_TARGET_NAME} PRIVATE /IGNORE:4207,4286)
 endif()
