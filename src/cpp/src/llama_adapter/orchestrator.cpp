@@ -43,9 +43,13 @@ std::shared_ptr<ov::Model> get_stateful_ov_model(const std::filesystem::path& mo
     std::shared_ptr<ov::Model> model = frontend.convert(input_model);
     OPENVINO_ASSERT(model != nullptr, "Frontend failed to convert GgmlOvDecoder to stateful ov::Model");
 
-    // Keep ExtractedCGraph resources (llama_model, llama_context) alive in static storage so underlying model tensor buffers are preserved
-    static std::vector<ExtractedCGraph> s_kept_graphs;
-    s_kept_graphs.push_back(std::move(ext));
+    // Bind ExtractedCGraph resources (llama_model, llama_context) to ov::Model runtime info so tensor buffers remain alive with the model
+    struct ExtractedCGraphHolder {
+        ExtractedCGraph ext;
+    };
+    auto holder = std::make_shared<ExtractedCGraphHolder>();
+    holder->ext = std::move(ext);
+    model->get_rt_info()["llama_cgraph_holder"] = holder;
 
     return model;
 #else
