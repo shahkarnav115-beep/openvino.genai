@@ -32,6 +32,11 @@ ExtractedCGraph extract_cgraph(const std::filesystem::path& model_path) {
 #ifdef RUN_WITH_LLAMA
     OPENVINO_ASSERT(std::filesystem::exists(model_path), "GGUF model file does not exist at: ", model_path.string());
 
+    const char* verbose = std::getenv("LLAMA_VERBOSE");
+    if (!verbose || std::string(verbose) != "1") {
+        llama_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
+    }
+
     llama_backend_init();
 
     ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
@@ -40,7 +45,9 @@ ExtractedCGraph extract_cgraph(const std::filesystem::path& model_path) {
     llama_model_params mparams = llama_model_default_params();
     mparams.vocab_only = false;
     mparams.n_gpu_layers = 0; // CPU graph extraction; disable GPU offloading
-    mparams.no_alloc = false;    // Keep false for mmap tensor metadata loading
+    mparams.no_alloc = false;    // Keep false for tensor metadata loading
+    mparams.use_mmap = false;    // Disable mmap to force loading raw weight and frequency bytes into RAM buffers
+    mparams.use_extra_bufts = false; // Disable llama.cpp weight repacking to preserve native GGUF block layout
     if (cpu_dev) {
         mparams.devices = cpu_devices;
     }
